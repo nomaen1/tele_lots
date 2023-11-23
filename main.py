@@ -24,8 +24,6 @@ user_clicks = {}
 
 @dp.callback_query_handler(lambda call: call)
 async def inline(call):
-    global first_click_user_id
-    user_id = call.from_user.id
     if call.data == "зарегаться":
         await register(call.message)
     elif call.data == "ознакомлен":
@@ -33,22 +31,13 @@ async def inline(call):
         cursor.connection.commit()
         await bot.send_message(call.message.chat.id, "Отлично👍 Теперь зарегистрируйтесь", reply_markup=reg_keyboard)
     elif call.data == "беру":
-        if user_id not in user_clicks:
-            user_clicks[user_id] = 0
-        if user_clicks[user_id] < 2:
-            user_clicks[user_id] += 1
-
-            if first_click_user_id is None:
-                first_click_user_id = call.from_user.id
-                await process_callback_button(call)
-                global initial_amount
-                initial_amount = max(initial_amount + 50, 0)
-                await send_winner(call.from_user.id, initial_amount)
-        #     else:
-        #         await call.answer("Вы уже нажали на кнопку.")
-        # else:
-        #     # Сообщаем пользователю, что он достиг максимального количества нажатий
-        #     await call.answer("Вы уже нажали на кнопку два раза.", show_alert=True)
+        global initial_amount, first_click_user_id
+        if first_click_user_id is None:
+            first_click_user_id = call.from_user.id
+            await process_callback_button(call)
+            global initial_amount
+            initial_amount = max(initial_amount + 50, 0)
+            await send_winner(call.from_user.id, initial_amount)
         initial_amount = 400
 
 async def process_callback_button(callback_query: types.CallbackQuery):
@@ -183,30 +172,30 @@ async def send_winner(user_id, price):
     buyer = cursor.fetchone()
     if buyer:
         name, lastname, winner = buyer
-        if winner < 2:
-            winner = winner + 1
-            cursor.execute(f"UPDATE users SET winner = ?, price = ? WHERE user_id = ?", (winner, price, user_id))
-            cursor.connection.commit()
-            cursor.execute(f"SELECT user_id FROM users")
-            users = cursor.fetchall()
-            for user in users:
-                user = user[0]
-                message_text = f"👨‍⚖ У нас есть победитель! Пользователь {name} {lastname} выиграл - Лот {round_counter}  - за 💲{initial_amount}."
-                await bot.send_message(user, message_text)
-                message_text2 = f"😊 Аукцион {auction_counter} закончился."
-                await bot.send_message(user, message_text2)
-            auction_counter += 1
-            if auction_counter == 11:
-                await bot.send_message(user_id, "На сегодня аукцион закончился. Ждите следующего начала")
-                await stop_scheduler()
-            round_counter += 1
-            reset_registration()
+        # if winner < 2:
+        winner = winner + 1
+        cursor.execute(f"UPDATE users SET winner = ?, price = ? WHERE user_id = ?", (winner, price, user_id))
+        cursor.connection.commit()
+        cursor.execute(f"SELECT user_id FROM users")
+        users = cursor.fetchall()
+        for user in users:
+            user = user[0]
+            message_text = f"👨‍⚖ У нас есть победитель! Пользователь {name} {lastname} выиграл - Лот {round_counter}  - за 💲{initial_amount}."
+            await bot.send_message(user, message_text)
+            message_text2 = f"😊 Аукцион {auction_counter} закончился."
+            await bot.send_message(user, message_text2)
+        auction_counter += 1
+        if auction_counter == 11:
+            await bot.send_message(user_id, "На сегодня аукцион закончился. Ждите следующего начала")
+            await stop_scheduler()
+        round_counter += 1
+        reset_registration()
 
-        elif winner == 2:
+        # elif winner == 2:
             
-            message_text = f"👨‍⚖ Вы больше не можете участвовать в аукционах."
-            await bot.send_message(user_id, message_text)
-            initial_amount = max(initial_amount - 50, 0)
+        #     message_text = f"👨‍⚖ Вы больше не можете участвовать в аукционах."
+        #     await bot.send_message(user_id, message_text)
+        #     initial_amount = max(initial_amount - 50, 0)
 
 
 
@@ -214,7 +203,7 @@ def is_user_eligible(user_id, agreement, name, lastname):
     return agreement is not None and agreement != 0 and name is not None and lastname is not None
 
 async def scheduler():
-    aioschedule.every(15).seconds.do(send_auction_start_message)
+    aioschedule.every(10).seconds.do(send_auction_start_message)
 
     while True:
         await aioschedule.run_pending()
