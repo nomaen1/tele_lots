@@ -16,9 +16,10 @@ dp = Dispatcher(bot, storage=storage)
 logging.basicConfig(level=logging.INFO)
 
 initial_amount = 400
-previous_button_id = None
+previous_button_ids = {}
+round_counter = 1
 auction_counter = 1
-max_auction_repeats = 5
+winner_announced = False
 
 @dp.callback_query_handler(lambda call: call)
 async def inline(call):
@@ -28,18 +29,24 @@ async def inline(call):
         await bot.send_message(call.message.chat.id, "Напишите 'Ознакомлен'")
         await RegistrationStates.agreement.set()
     elif call.data == "беру":
-        await process_callback_button(call)
-        global initial_amount
-        initial_amount = max(initial_amount + 50, 0)
-        await send_winner(call.from_user.id, initial_amount)
-        initial_amount = 400
+        user_id = call.from_user.id
+        if not winner_announced:
+            await process_callback_button(call)
+            global initial_amount
+            initial_amount = max(initial_amount + 50, 0)
+            await send_winner(user_id, initial_amount)
+            initial_amount = 400
+            winner_announced = True
 
 
 async def process_callback_button(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
-    await bot.edit_message_reply_markup(chat_id=callback_query.message.chat.id,
-                                        message_id=callback_query.message.message_id,
-                                        reply_markup=None)
+    try:
+        await bot.edit_message_reply_markup(chat_id=callback_query.message.chat.id,
+                                            message_id=callback_query.message.message_id,
+                                            reply_markup=None)
+    except MessageNotModified:
+        pass
 
 @dp.message_handler(commands='start')
 async def start(message:types.Message):
@@ -105,81 +112,103 @@ async def process_surname(message: types.Message, state: FSMContext):
 
 
 async def send_auction_start_message():
-    global initial_amount, previous_button_id, auction_counter
+    global initial_amount, previous_button_ids, auction_counter, round_counter
 
     cursor.execute("SELECT user_id, agreement, name, lastname FROM users")
     users = cursor.fetchall()
 
-    # if auction_counter < max_auction_repeats:
+
     if initial_amount == 400:
         for user_id, agreement, name, lastname in users:
             if is_user_eligible(user_id, agreement, name, lastname):
-                message_text = f"👨‍⚖ Аукцион начался - Лот 1 -  начальная цена 💲{initial_amount}. Всем удачи!)"
+                message_text = f"👨‍⚖ Аукцион начался - Лот {round_counter} -  начальная цена 💲{initial_amount}. Всем удачи!)"
                 take_button = types.InlineKeyboardButton("Беру", callback_data="беру")
                 take_keyboard = types.InlineKeyboardMarkup()
                 take_keyboard.add(take_button)
+                previous_button_id = previous_button_ids.get(user_id)
                 if previous_button_id:
-                    await bot.edit_message_reply_markup(chat_id=user_id, message_id=previous_button_id, reply_markup=None)
+                    try:
+                        await bot.edit_message_reply_markup(chat_id=user_id, message_id=previous_button_id, reply_markup=None)
+                    except MessageNotModified:
+                        pass
                 sent_message = await bot.send_message(user_id, message_text, reply_markup=take_keyboard)
-                previous_button_id = sent_message.message_id
-                
+                previous_button_ids[user_id] = sent_message.message_id
+
         initial_amount = max(initial_amount - 50,0)
-        # auction_counter += 1
 
     elif 250 <= initial_amount < 400:
         for user_id, agreement, name, lastname in users:
             if is_user_eligible(user_id, agreement, name, lastname):
-                message_text = f"👨‍⚖ Цена уменьшилась! - Лот 1 -  начальная цена 💲{initial_amount}. Всем удачи!)"
+                message_text = f"👨‍⚖ Цена уменьшилась! - Лот {round_counter} -  начальная цена 💲{initial_amount}. Всем удачи!)"
                 take_button = types.InlineKeyboardButton("Беру", callback_data="беру")
                 take_keyboard = types.InlineKeyboardMarkup()
                 take_keyboard.add(take_button)
+                previous_button_id = previous_button_ids.get(user_id)
                 if previous_button_id:
-                    await bot.edit_message_reply_markup(chat_id=user_id, message_id=previous_button_id, reply_markup=None)
+                    try:
+                        await bot.edit_message_reply_markup(chat_id=user_id, message_id=previous_button_id, reply_markup=None)
+                    except MessageNotModified:
+                        pass
                 sent_message = await bot.send_message(user_id, message_text, reply_markup=take_keyboard)
-                previous_button_id = sent_message.message_id
+                previous_button_ids[user_id] = sent_message.message_id
                 
         initial_amount = max(initial_amount - 50,0)
-        # auction_counter += 1
+
 
     elif initial_amount < 250:
         for user_id, agreement, name, lastname, in users:
             if is_user_eligible(user_id, agreement, name, lastname):
-                message_text = f"😊 Первый аукцион закончился."
+                message_text = f"😊 Аукцион {auction_counter} закончился."
                 await bot.send_message(user_id, message_text)
                 await stop_scheduler()
                 initial_amount = 400
-                await scheduler()
-    # else:
-    #     aioschedule.clear()
-    #     print("Аукцион завершен!") 
 
+        auction_counter += 1
+        round_counter += 1
+        if auction_counter <= 10:
+            await scheduler()
+        else:
+            for user_id, agreement, name, lastname, in users:
+                if is_user_eligible(user_id, agreement, name, lastname):
+                    await bot.send_message(user_id, "На сегодня аукцион закончился. Ждите следующего начала")
+            await stop_scheduler()
+
+
+    
 
 async def send_winner(user_id, price):
+    global auction_counter, initial_amount, round_counter
     cursor.execute(f"SELECT name, lastname, winner FROM users where user_id = {user_id}")
     buyer = cursor.fetchone()
     if buyer:
         name, lastname, winner = buyer
         if winner < 10:
-            winner = winner + 1
-            cursor.execute(f"UPDATE users SET winner = ?, price = ? WHERE user_id = ?", (winner, price, user_id))
-            cursor.connection.commit()
-            cursor.execute(f"SELECT user_id FROM users")
-            users = cursor.fetchall()
-            for user in users:
-                user = user[0]
-                message_text = f"👨‍⚖ У нас есть победитель! Пользователь {name} {lastname} выиграл - Лот 1  - за 💲{initial_amount}."
-                await bot.send_message(user_id, message_text)
+                winner = winner + 1
+                cursor.execute(f"UPDATE users SET winner = ?, price = ? WHERE user_id = ?", (winner, price, user_id))
+                cursor.connection.commit()
+                cursor.execute(f"SELECT user_id FROM users")
+                users = cursor.fetchall()
+                for user in users:
+                    user = user[0]
+                    message_text = f"👨‍⚖ У нас есть победитель! Пользователь {name} {lastname} выиграл - Лот {round_counter}  - за 💲{initial_amount}."
+                    await bot.send_message(user, message_text)
+                    message_text2 = f"😊 Аукцион {auction_counter} закончился."
+                    await bot.send_message(user, message_text2)
+                auction_counter += 1
+                round_counter += 1
+
         elif winner == 10:
             message_text = f"👨‍⚖ Вы больше не можете участвовать в аукционах."
             await bot.send_message(user_id, message_text)
+            initial_amount = max(initial_amount - 50, 0)
+
 
 
 def is_user_eligible(user_id, agreement, name, lastname):
     return agreement is not None and agreement != 0 and name is not None and lastname is not None
 
 async def scheduler():
-    # aioschedule.every().day.at("16:04").do(send_auction_start_message)
-    aioschedule.every(3).seconds.do(send_auction_start_message)
+    aioschedule.every(5).seconds.do(send_auction_start_message) 
 
     while True:
         await aioschedule.run_pending()
