@@ -11,7 +11,7 @@ cursor.execute("""
         round INTEGER DEFAULT 0,
         winner INTEGER DEFAULT 0,
         price INTEGER DEFAULT 0,
-        agreement DATETIME
+        agreement VARCHAR
     ); 
 """)
 cursor.connection.commit()

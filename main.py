@@ -6,7 +6,7 @@ from aiogram.utils.exceptions import MessageNotModified
 from dotenv import load_dotenv
 from buttons import *
 from database import cursor
-import logging, os, aioschedule, asyncio
+import logging, os, aioschedule, asyncio, time
 
 load_dotenv('.env')
 
@@ -19,24 +19,24 @@ initial_amount = 400
 previous_button_ids = {}
 round_counter = 1
 auction_counter = 1
-# winner_announced = False
+first_click_user_id = None
 
 @dp.callback_query_handler(lambda call: call)
 async def inline(call):
+    global first_click_user_id
     if call.data == "зарегаться":
         await register(call.message)
     elif call.data == "ознакомлен":
-        await bot.send_message(call.message.chat.id, "Напишите 'Ознакомлен'")
-        await RegistrationStates.agreement.set()
+        cursor.execute(f"UPDATE users SET agreement = ? WHERE user_id = ?", (time.ctime(), call.from_user.id))
+        cursor.connection.commit()
+        await bot.send_message(call.message.chat.id, "Отлично👍 Теперь зарегистрируйтесь", reply_markup=reg_keyboard)
     elif call.data == "беру":
-        # if not winner_announced:
-        await process_callback_button(call)
-        global initial_amount
-        initial_amount = max(initial_amount + 50, 0)
-        await send_winner(call.from_user.id, initial_amount)
-        initial_amount = 400
-        # winner_announced = True
-
+        if first_click_user_id is None:
+            first_click_user_id = call.from_user.id
+            await process_callback_button(call)
+            global initial_amount
+            initial_amount = max(initial_amount + 50, 0)
+            await send_winner(call.from_user.id, initial_amount)
 
 async def process_callback_button(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
@@ -46,6 +46,10 @@ async def process_callback_button(callback_query: types.CallbackQuery):
                                             reply_markup=None)
     except MessageNotModified:
         pass
+
+def reset_registration():
+    global first_click_user_id
+    first_click_user_id = None
 
 @dp.message_handler(commands='start')
 async def start(message:types.Message):
@@ -68,21 +72,6 @@ async def start(message:types.Message):
 4        🗺 По подбору маршрута можете подобрать рейсы у агентов или в интернете, потом отправить данный маршрут на почту air.manager@concept.kg 📧 для проверки наличия мест. После подтверждения, данный маршрут бронируется на данные пассажира, и выкупается в течение 2 дней.                                                                                        
 5        🔃 Таксы включены в стоимость лота. Расчет в сомах на день выписки по коммерческому курсу компании.                                                                                        
 6        ❗ ❗ ❗ На выигранные лоты не распространяется оплата в рассрочку. Разрешается оплата через стандартный займ у компании и оплата сразу. В виде исключения разрешается оплатить полную стоимость с первого получения вознаграждения.""", reply_markup=agree_keyboard)
-
-
-
-@dp.message_handler(state=RegistrationStates.agreement)
-async def agree(message:types.Message, state:FSMContext):
-    user_id = message.from_user.id
-    agreement = message.text
-    if agreement == "Ознакомлен":
-        cursor.execute(f"UPDATE users SET agreement = CURRENT_TIMESTAMP WHERE user_id = {user_id}")
-        cursor.connection.commit()
-        await state.finish()
-        await message.answer("Отлично👍 Теперь зарегистрируйтесь", reply_markup=reg_keyboard)
-    else:
-        await message.answer("Неправильно введено слово. Попробуйте еще раз")
-        await RegistrationStates.agreement.set()
 
 async def register(message:types.Message):
     await message.answer("Введите ваше имя")
@@ -181,22 +170,27 @@ async def send_winner(user_id, price):
     buyer = cursor.fetchone()
     if buyer:
         name, lastname, winner = buyer
-        if winner < 10:
-                winner = winner + 1
-                cursor.execute(f"UPDATE users SET winner = ?, price = ? WHERE user_id = ?", (winner, price, user_id))
-                cursor.connection.commit()
-                cursor.execute(f"SELECT user_id FROM users")
-                users = cursor.fetchall()
-                for user in users:
-                    user = user[0]
-                    message_text = f"👨‍⚖ У нас есть победитель! Пользователь {name} {lastname} выиграл - Лот {round_counter}  - за 💲{initial_amount}."
-                    await bot.send_message(user, message_text)
-                    message_text2 = f"😊 Аукцион {auction_counter} закончился."
-                    await bot.send_message(user, message_text2)
-                auction_counter += 1
-                round_counter += 1
+        if winner < 2:
+            winner = winner + 1
+            cursor.execute(f"UPDATE users SET winner = ?, price = ? WHERE user_id = ?", (winner, price, user_id))
+            cursor.connection.commit()
+            cursor.execute(f"SELECT user_id FROM users")
+            users = cursor.fetchall()
+            for user in users:
+                user = user[0]
+                message_text = f"👨‍⚖ У нас есть победитель! Пользователь {name} {lastname} выиграл - Лот {round_counter}  - за 💲{initial_amount}."
+                await bot.send_message(user, message_text)
+                message_text2 = f"😊 Аукцион {auction_counter} закончился."
+                await bot.send_message(user, message_text2)
+            auction_counter += 1
+            if auction_counter == 11:
+                await bot.send_message(user_id, "На сегодня аукцион закончился. Ждите следующего начала")
+                await stop_scheduler()
+            round_counter += 1
+            reset_registration()
 
-        elif winner == 10:
+        elif winner == 2:
+            
             message_text = f"👨‍⚖ Вы больше не можете участвовать в аукционах."
             await bot.send_message(user_id, message_text)
             initial_amount = max(initial_amount - 50, 0)
@@ -207,7 +201,7 @@ def is_user_eligible(user_id, agreement, name, lastname):
     return agreement is not None and agreement != 0 and name is not None and lastname is not None
 
 async def scheduler():
-    aioschedule.every(5).seconds.do(send_auction_start_message) 
+    aioschedule.every(15).seconds.do(send_auction_start_message)
 
     while True:
         await aioschedule.run_pending()
