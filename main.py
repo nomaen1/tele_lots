@@ -22,10 +22,11 @@ auction_counter = 1
 first_click_user_id = None
 user_clicks = {}
 user_wins = {}
+user_message_ids = {}
 
 @dp.callback_query_handler(lambda call: call)
 async def inline(call):
-    global initial_amount, first_click_user_id, user_wins, user_clicks
+    global initial_amount, first_click_user_id, user_wins, user_clicks, user_message_ids
     user_id = call.from_user.id
     if call.data == "зарегаться":
         await register(call.message)
@@ -35,19 +36,25 @@ async def inline(call):
         await bot.send_message(call.message.chat.id, "Отлично👍 Теперь зарегистрируйтесь", reply_markup=reg_keyboard)
     elif call.data == "беру":
         if user_wins.get(user_id, 0) < 2:
-            # Проверяем, нажимает ли пользователь впервые или второй раз
             if first_click_user_id is None or first_click_user_id == user_id:
                 first_click_user_id = user_id
                 await process_callback_button(call)
                 initial_amount = max(initial_amount + 50, 0)
                 await send_winner(user_id, initial_amount)
                 initial_amount = 400
-                # Увеличиваем счетчик побед
                 user_wins[user_id] = user_wins.get(user_id, 0) + 1
+
+                # for uid, msg_id in user_message_ids.items():
+                #     try:
+                #         await bot.edit_message_reply_markup(chat_id=uid, message_id=msg_id, reply_markup=None)
+                #     except Exception as e:
+                #         print(f"Ошибка при обновлении сообщения: {e}")
+
             else:
                 await call.answer("Кнопка уже была нажата другим пользователем.", show_alert=True)
         else:
             await call.answer("Вы уже победили два раза!", show_alert=True)
+
         # if user_clicks.get(user_id, 0) < 2:
         #     user_clicks[user_id] = user_clicks.get(user_id, 0) + 1
 
@@ -209,7 +216,7 @@ async def send_auction_start_message():
     
 
 async def send_winner(user_id, price):
-    global auction_counter, initial_amount, round_counter
+    global auction_counter, initial_amount, round_counter, user_message_ids
     cursor.execute(f"SELECT name, lastname, winner FROM users where user_id = {user_id}")
     buyer = cursor.fetchone()
     if buyer:
@@ -220,6 +227,14 @@ async def send_winner(user_id, price):
         cursor.connection.commit()
         cursor.execute(f"SELECT user_id FROM users")
         users = cursor.fetchall()
+
+        for uid, msg_id in user_message_ids.items():
+            try:
+                await bot.edit_message_reply_markup(uid, msg_id, reply_markup=None)
+            except Exception as e:
+                print(f"Ошибка при обновлении сообщения: {e}")
+        user_message_ids = {}
+
         for user in users:
             user = user[0]
             message_text = f"👨‍⚖ У нас есть победитель! Пользователь {name} {lastname} выиграл - Лот {round_counter}  - за 💲{initial_amount}."
