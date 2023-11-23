@@ -20,10 +20,12 @@ previous_button_ids = {}
 round_counter = 1
 auction_counter = 1
 first_click_user_id = None
+user_clicks = {}
 
 @dp.callback_query_handler(lambda call: call)
 async def inline(call):
     global first_click_user_id
+    user_id = call.from_user.id
     if call.data == "зарегаться":
         await register(call.message)
     elif call.data == "ознакомлен":
@@ -31,12 +33,23 @@ async def inline(call):
         cursor.connection.commit()
         await bot.send_message(call.message.chat.id, "Отлично👍 Теперь зарегистрируйтесь", reply_markup=reg_keyboard)
     elif call.data == "беру":
-        if first_click_user_id is None:
-            first_click_user_id = call.from_user.id
-            await process_callback_button(call)
-            global initial_amount
-            initial_amount = max(initial_amount + 50, 0)
-            await send_winner(call.from_user.id, initial_amount)
+        if user_id not in user_clicks:
+            user_clicks[user_id] = 0
+        if user_clicks[user_id] < 2:
+            user_clicks[user_id] += 1
+
+            if first_click_user_id is None:
+                first_click_user_id = call.from_user.id
+                await process_callback_button(call)
+                global initial_amount
+                initial_amount = max(initial_amount + 50, 0)
+                await send_winner(call.from_user.id, initial_amount)
+        #     else:
+        #         await call.answer("Вы уже нажали на кнопку.")
+        # else:
+        #     # Сообщаем пользователю, что он достиг максимального количества нажатий
+        #     await call.answer("Вы уже нажали на кнопку два раза.", show_alert=True)
+        initial_amount = 400
 
 async def process_callback_button(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
