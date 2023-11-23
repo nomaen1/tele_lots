@@ -43,13 +43,6 @@ async def inline(call):
                 await send_winner(user_id, initial_amount)
                 initial_amount = 400
                 user_wins[user_id] = user_wins.get(user_id, 0) + 1
-
-                # for uid, msg_id in user_message_ids.items():
-                #     try:
-                #         await bot.edit_message_reply_markup(chat_id=uid, message_id=msg_id, reply_markup=None)
-                #     except Exception as e:
-                #         print(f"Ошибка при обновлении сообщения: {e}")
-
             else:
                 await call.answer("Кнопка уже была нажата другим пользователем.", show_alert=True)
         else:
@@ -213,12 +206,22 @@ async def send_auction_start_message():
             await stop_scheduler()
 
 
+async def remove_buttons_from_all_messages():
+    global user_message_ids
+    for uid, msg_id in user_message_ids.items():
+        try:
+            await bot.edit_message_reply_markup(uid, msg_id, reply_markup=None)
+        except Exception as e:
+            print(f"Ошибка при обновлении сообщения пользователя {uid}: {e}")
+    # Очистка словаря после удаления всех кнопок
+    user_message_ids = {}
     
 
 async def send_winner(user_id, price):
-    global auction_counter, initial_amount, round_counter, user_message_ids
+    global auction_counter, initial_amount, round_counter
     cursor.execute(f"SELECT name, lastname, winner FROM users where user_id = {user_id}")
     buyer = cursor.fetchone()
+    await remove_buttons_from_all_messages()
     if buyer:
         name, lastname, winner = buyer
         # if winner < 2:
@@ -227,14 +230,6 @@ async def send_winner(user_id, price):
         cursor.connection.commit()
         cursor.execute(f"SELECT user_id FROM users")
         users = cursor.fetchall()
-
-        for uid, msg_id in user_message_ids.items():
-            try:
-                await bot.edit_message_reply_markup(uid, msg_id, reply_markup=None)
-            except Exception as e:
-                print(f"Ошибка при обновлении сообщения: {e}")
-        user_message_ids = {}
-
         for user in users:
             user = user[0]
             message_text = f"👨‍⚖ У нас есть победитель! Пользователь {name} {lastname} выиграл - Лот {round_counter}  - за 💲{initial_amount}."
@@ -260,7 +255,7 @@ def is_user_eligible(user_id, agreement, name, lastname):
     return agreement is not None and agreement != 0 and name is not None and lastname is not None
 
 async def scheduler():
-    aioschedule.every(15).seconds.do(send_auction_start_message)
+    aioschedule.every(10).seconds.do(send_auction_start_message)
 
     while True:
         await aioschedule.run_pending()
