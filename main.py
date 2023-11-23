@@ -10,7 +10,7 @@ import logging, os, aioschedule, asyncio
 
 load_dotenv('.env')
 
-bot = Bot(token=os.environ.get('token'))
+bot = Bot(token=os.environ.get('token2'))
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +19,7 @@ initial_amount = 400
 previous_button_ids = {}
 round_counter = 1
 auction_counter = 1
-winner_announced = False
+# winner_announced = False
 
 @dp.callback_query_handler(lambda call: call)
 async def inline(call):
@@ -29,14 +29,13 @@ async def inline(call):
         await bot.send_message(call.message.chat.id, "Напишите 'Ознакомлен'")
         await RegistrationStates.agreement.set()
     elif call.data == "беру":
-        user_id = call.from_user.id
-        if not winner_announced:
-            await process_callback_button(call)
-            global initial_amount
-            initial_amount = max(initial_amount + 50, 0)
-            await send_winner(user_id, initial_amount)
-            initial_amount = 400
-            winner_announced = True
+        # if not winner_announced:
+        await process_callback_button(call)
+        global initial_amount
+        initial_amount = max(initial_amount + 50, 0)
+        await send_winner(call.from_user.id, initial_amount)
+        initial_amount = 400
+        # winner_announced = True
 
 
 async def process_callback_button(callback_query: types.CallbackQuery):
