@@ -21,10 +21,11 @@ round_counter = 1
 auction_counter = 1
 first_click_user_id = None
 user_clicks = {}
+user_wins = {}
 
 @dp.callback_query_handler(lambda call: call)
 async def inline(call):
-    global initial_amount, first_click_user_id
+    global initial_amount, first_click_user_id, user_wins, user_clicks
     user_id = call.from_user.id
     if call.data == "зарегаться":
         await register(call.message)
@@ -33,29 +34,41 @@ async def inline(call):
         cursor.connection.commit()
         await bot.send_message(call.message.chat.id, "Отлично👍 Теперь зарегистрируйтесь", reply_markup=reg_keyboard)
     elif call.data == "беру":
-        if user_clicks.get(user_id, 0) < 2:
-            # Увеличиваем счетчик нажатий
-            user_clicks[user_id] = user_clicks.get(user_id, 0) + 1
-
-            if first_click_user_id is None:
+        if user_wins.get(user_id, 0) < 2:
+            # Проверяем, нажимает ли пользователь впервые или второй раз
+            if first_click_user_id is None or first_click_user_id == user_id:
                 first_click_user_id = user_id
                 await process_callback_button(call)
                 initial_amount = max(initial_amount + 50, 0)
                 await send_winner(user_id, initial_amount)
-                initial_amount = 400  # Сбросить initial_amount после отправки победителя
-
-            elif first_click_user_id == user_id:
-                # Пользователь нажимает второй раз
-                await process_callback_button(call)
-                initial_amount = max(initial_amount + 50, 0)
-                await send_winner(user_id, initial_amount)
-                initial_amount = 400  # Сбросить initial_amount после отправки победителя
+                initial_amount = 400
+                # Увеличиваем счетчик побед
+                user_wins[user_id] = user_wins.get(user_id, 0) + 1
             else:
-                # Пользователь пытается нажать кнопку после того, как кто-то уже выиграл
                 await call.answer("Кнопка уже была нажата другим пользователем.", show_alert=True)
         else:
-            # Пользователь пытается нажать в третий раз
-            await call.answer("Вы уже использовали свои две попытки.", show_alert=True)
+            await call.answer("Вы уже победили два раза!", show_alert=True)
+        # if user_clicks.get(user_id, 0) < 2:
+        #     user_clicks[user_id] = user_clicks.get(user_id, 0) + 1
+
+        #     if first_click_user_id is None:
+        #         first_click_user_id = user_id
+        #         await process_callback_button(call)
+        #         initial_amount = max(initial_amount + 50, 0)
+        #         await send_winner(user_id, initial_amount)
+        #         initial_amount = 400  
+
+        #     elif first_click_user_id == user_id:
+        #         # Пользователь нажимает второй раз
+        #         await process_callback_button(call)
+        #         initial_amount = max(initial_amount + 50, 0)
+        #         await send_winner(user_id, initial_amount)
+        #         initial_amount = 400  
+        #     else:
+        #         await call.answer("Кнопка уже была нажата другим пользователем.", show_alert=True)
+        # else:
+        #     await call.answer("Вы уже использовали свои две попытки.", show_alert=True)
+
         # if user_id not in user_clicks:
         #     user_clicks[user_id] = 0
         # if user_clicks[user_id] < 2:
@@ -67,6 +80,7 @@ async def inline(call):
         #         initial_amount = max(initial_amount + 50, 0)
         #         await send_winner(call.from_user.id, initial_amount)
         #     initial_amount = 400
+
 
 async def process_callback_button(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
