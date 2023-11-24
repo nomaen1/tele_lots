@@ -6,7 +6,7 @@ from aiogram.utils.exceptions import MessageNotModified
 from dotenv import load_dotenv
 from buttons import *
 from database import cursor
-import logging, os, aioschedule, asyncio, time
+import logging, os, aioschedule, asyncio, time, datetime
 
 load_dotenv('.env')
 
@@ -23,6 +23,9 @@ first_click_user_id = None
 user_clicks = {}
 user_wins = {}
 user_message_ids = {}
+auction_active = True
+registration_open = True
+
 
 @dp.callback_query_handler(lambda call: call)
 async def inline(call):
@@ -35,51 +38,21 @@ async def inline(call):
         cursor.connection.commit()
         await bot.send_message(call.message.chat.id, "Отлично👍 Теперь зарегистрируйтесь", reply_markup=reg_keyboard)
     elif call.data == "беру":
-        if user_wins.get(user_id, 0) < 2:
-            if first_click_user_id is None or first_click_user_id == user_id:
-                first_click_user_id = user_id
-                await process_callback_button(call)
-                initial_amount = max(initial_amount + 50, 0)
-                await send_winner(user_id, initial_amount)
-                initial_amount = 400
-                user_wins[user_id] = user_wins.get(user_id, 0) + 1
+        if auction_active:
+            if user_wins.get(user_id, 0) < 2:
+                if first_click_user_id is None or first_click_user_id == user_id:
+                    first_click_user_id = user_id
+                    await process_callback_button(call)
+                    initial_amount = max(initial_amount + 50, 0)
+                    await send_winner(user_id, initial_amount)
+                    initial_amount = 400
+                    user_wins[user_id] = user_wins.get(user_id, 0) + 1
+                else:
+                    await call.answer("Кнопка уже была нажата другим пользователем.", show_alert=True)
             else:
-                await call.answer("Кнопка уже была нажата другим пользователем.", show_alert=True)
+                await call.answer("Вы уже победили два раза!", show_alert=True)
         else:
-            await call.answer("Вы уже победили два раза!", show_alert=True)
-
-        # if user_clicks.get(user_id, 0) < 2:
-        #     user_clicks[user_id] = user_clicks.get(user_id, 0) + 1
-
-        #     if first_click_user_id is None:
-        #         first_click_user_id = user_id
-        #         await process_callback_button(call)
-        #         initial_amount = max(initial_amount + 50, 0)
-        #         await send_winner(user_id, initial_amount)
-        #         initial_amount = 400  
-
-        #     elif first_click_user_id == user_id:
-        #         # Пользователь нажимает второй раз
-        #         await process_callback_button(call)
-        #         initial_amount = max(initial_amount + 50, 0)
-        #         await send_winner(user_id, initial_amount)
-        #         initial_amount = 400  
-        #     else:
-        #         await call.answer("Кнопка уже была нажата другим пользователем.", show_alert=True)
-        # else:
-        #     await call.answer("Вы уже использовали свои две попытки.", show_alert=True)
-
-        # if user_id not in user_clicks:
-        #     user_clicks[user_id] = 0
-        # if user_clicks[user_id] < 2:
-        #     user_clicks[user_id] += 1
-        #     if first_click_user_id is None:
-        #         first_click_user_id = call.from_user.id
-        #         await process_callback_button(call)
-        #         global initial_amount
-        #         initial_amount = max(initial_amount + 50, 0)
-        #         await send_winner(call.from_user.id, initial_amount)
-        #     initial_amount = 400
+            await call.answer("Аукцион уже завершён!", show_alert=True)
 
 
 async def process_callback_button(callback_query: types.CallbackQuery):
@@ -95,28 +68,41 @@ def reset_registration():
     global first_click_user_id
     first_click_user_id = None
 
+
 @dp.message_handler(commands='start')
 async def start(message:types.Message):
-    cursor.execute(f"SELECT * FROM users WHERE user_id = '{message.from_user.id}';")
-    result = cursor.fetchall()
-    if result == []:
-        cursor.execute(f"""INSERT INTO users (user_id, username) VALUES ('{message.from_user.id}', '{message.from_user.username}');""")
-    cursor.connection.commit()
-    await message.answer("""Правила голландоского аукциона "Турецкие авиалинии - Сентябрь 2023"                                                                                                
-1        👨🏻‍💻 Аукциона автоматический.                                                                                        
-2        🥇 Первый написавший в определенный промежуток времени, выигрывает лот со стоимостью соответствующий этому времени. Фиксируется время сообщения.                                                                                        
-3        ⛔ Человек отказавшийся от лота в течение  3 часов после выигрыша, вноситься в бан на участие в Голландском аукционе "Турецкие авиалинии - Сентябрь 2023", его лот перевыставляется повторно на аукционе. Отказавший от лота больше 3 часов после выигрыша вноситься в бан на участие на Голландских аукционах на полгода.                                                                                        
-4        🔁 Выигранный лот разрешается перепродать или подарить только ВП компанний.                                                                                        
-5        ⚠️ 1 сотрудник может купить только 1 лот  на данном ауцкионе.\n
+    global registration_open
+    if registration_open:
 
-Условия по выигранным лотам на Голландском аукционе "Турецкие авиалинии - Сентябрь 2023"                                                                                                
-1        📆 Срок выписки билетов до 31 декабря 2023.                                                                                        
-2        📅 Даты путешествия до 01 сентября 2024 года                                                                                        
-3        🧑🏻‍✈️ Маршрут  - в любой город Турций 🇹🇷 (туда и обратно) с 1 остановкой Стамбуле или прямой рейс в пункт назначения  и  возврат в Бишкек. Разрешается прилет в 1 город, вылет из другого.                                                                                        
-4        🗺 По подбору маршрута можете подобрать рейсы у агентов или в интернете, потом отправить данный маршрут на почту air.manager@concept.kg 📧 для проверки наличия мест. После подтверждения, данный маршрут бронируется на данные пассажира, и выкупается в течение 2 дней.                                                                                        
-5        🔃 Таксы включены в стоимость лота. Расчет в сомах на день выписки по коммерческому курсу компании.                                                                                        
-6        ❗ ❗ ❗ На выигранные лоты не распространяется оплата в рассрочку. Разрешается оплата через стандартный займ у компании и оплата сразу. В виде исключения разрешается оплатить полную стоимость с первого получения вознаграждения.""", reply_markup=agree_keyboard)
+        current_time = datetime.datetime.now()
+        auction_start_time = datetime.datetime(current_time.year, current_time.month, current_time.day, 19, 57)
 
+        time_difference = auction_start_time - current_time
+
+        if time_difference.total_seconds() <= 60:  # 600 seconds = 10 minutes
+            await message.answer("Регистрация закрыта, так как до аукциона осталось менее 10 минут.")
+            return
+
+        cursor.execute(f"SELECT * FROM users WHERE user_id = '{message.from_user.id}';")
+        result = cursor.fetchall()
+        if result == []:
+            cursor.execute(f"""INSERT INTO users (user_id, username) VALUES ('{message.from_user.id}', '{message.from_user.username}');""")
+        cursor.connection.commit()
+        await message.answer("""Правила голландоского аукциона "Турецкие авиалинии - Сентябрь 2023" 1.👨🏻‍💻 Аукциона автоматический. 2.🥇 Первый написавший в определенный промежуток времени, выигрывает лот со стоимостью соответствующий этому времени. Фиксируется время сообщения.                                                                                        
+        3.⛔ Человек отказавшийся от лота в течение  3 часов после выигрыша, вноситься в бан на участие в Голландском аукционе "Турецкие авиалинии - Сентябрь 2023", его лот перевыставляется повторно на аукционе. Отказавший от лота больше 3 часов после выигрыша вноситься в бан на участие на Голландских аукционах на полгода.                                                                                        
+        4.🔁 Выигранный лот разрешается перепродать или подарить только ВП компанний.                                                                                    
+        5.⚠️ 1 сотрудник может купить только 1 лот  на данном ауцкионе.\n
+
+        Условия по выигранным лотам на Голландском аукционе "Турецкие авиалинии - Сентябрь 2023"                                                                                                
+        1        📆 Срок выписки билетов до 31 декабря 2023.                                                                                        
+        2        📅 Даты путешествия до 01 сентября 2024 года                                                                                        
+        3        🧑🏻‍✈️ Маршрут  - в любой город Турций 🇹🇷 (туда и обратно) с 1 остановкой Стамбуле или прямой рейс в пункт назначения  и  возврат в Бишкек. Разрешается прилет в 1 город, вылет из другого.                                                                                        
+        4        🗺 По подбору маршрута можете подобрать рейсы у агентов или в интернете, потом отправить данный маршрут на почту air.manager@concept.kg 📧 для проверки наличия мест. После подтверждения, данный маршрут бронируется на данные пассажира, и выкупается в течение 2 дней.                                                                                        
+        5        🔃 Таксы включены в стоимость лота. Расчет в сомах на день выписки по коммерческому курсу компании.                                                                                        
+        6        ❗ ❗ ❗ На выигранные лоты не распространяется оплата в рассрочку. Разрешается оплата через стандартный займ у компании и оплата сразу. В виде исключения разрешается оплатить полную стоимость с первого получения вознаграждения.""", reply_markup=agree_keyboard)
+    else:
+        await message.answer("Регистрация закрыта, так как до аукциона осталось менее 10 минут.")
+        
 async def register(message:types.Message):
     await message.answer("Введите ваше имя")
     await RegistrationStates.name.set()
@@ -142,13 +128,13 @@ async def process_surname(message: types.Message, state: FSMContext):
     await message.answer("⏳Мы вам сообщим когда аукцион начнется. 📧Ожидайте сообщение от меня")
 
 
-
 async def send_auction_start_message():
-    global initial_amount, previous_button_ids, auction_counter, round_counter
+    global registration_open, auction_active, initial_amount, previous_button_ids, auction_counter, round_counter
+    registration_open = True
+    auction_active = True
 
     cursor.execute("SELECT user_id, agreement, name, lastname FROM users")
     users = cursor.fetchall()
-
 
     if initial_amount == 400:
         for user_id, agreement, name, lastname in users:
@@ -213,23 +199,37 @@ async def remove_buttons_from_all_messages():
             await bot.edit_message_reply_markup(uid, msg_id, reply_markup=None)
         except Exception as e:
             print(f"Ошибка при обновлении сообщения пользователя {uid}: {e}")
-    # Очистка словаря после удаления всех кнопок
     user_message_ids = {}
-    
+
+async def close_registration_and_notify_users():
+    global registration_open
+    registration_open = False
+
+    # Получаем список всех пользователей из базы данных
+    cursor.execute("SELECT user_id FROM users")
+    users = cursor.fetchall()
+
+    # Отправляем сообщение каждому пользователю
+    for user in users:
+        try:
+            await bot.send_message(user[0], "Регистрация на аукцион закрыта.")
+        except Exception as e:
+            print(f"Не удалось отправить сообщение пользователю {user[0]}: {e}")
+
 
 async def send_winner(user_id, price):
-    global auction_counter, initial_amount, round_counter
+    global auction_active, auction_counter, initial_amount, round_counter
     cursor.execute(f"SELECT name, lastname, winner FROM users where user_id = {user_id}")
     buyer = cursor.fetchone()
     await remove_buttons_from_all_messages()
     if buyer:
         name, lastname, winner = buyer
-        # if winner < 2:
         winner = winner + 1
         cursor.execute(f"UPDATE users SET winner = ?, price = ? WHERE user_id = ?", (winner, price, user_id))
         cursor.connection.commit()
         cursor.execute(f"SELECT user_id FROM users")
         users = cursor.fetchall()
+        auction_active = False
         for user in users:
             user = user[0]
             message_text = f"👨‍⚖ У нас есть победитель! Пользователь {name} {lastname} выиграл - Лот {round_counter}  - за 💲{initial_amount}."
@@ -243,23 +243,28 @@ async def send_winner(user_id, price):
         round_counter += 1
         reset_registration()
 
-        # elif winner == 2:
-            
-        #     message_text = f"👨‍⚖ Вы больше не можете участвовать в аукционах."
-        #     await bot.send_message(user_id, message_text)
-        #     initial_amount = max(initial_amount - 50, 0)
-
-
 
 def is_user_eligible(user_id, agreement, name, lastname):
     return agreement is not None and agreement != 0 and name is not None and lastname is not None
 
+
 async def scheduler():
-    aioschedule.every(10).seconds.do(send_auction_start_message)
+    first_run = True
+
+    async def send_and_schedule():
+        nonlocal first_run
+        await send_auction_start_message()
+        if first_run:
+            first_run = False
+            aioschedule.every(5).seconds.do(send_auction_start_message)
+
+    aioschedule.every().day.at("19:57").do(send_and_schedule)
+    # aioschedule.every().day.at("19:21").do(lambda: asyncio.create_task(close_registration_and_notify_users()))
 
     while True:
         await aioschedule.run_pending()
         await asyncio.sleep(1)
+
 
 async def stop_scheduler():
     aioschedule.clear()
